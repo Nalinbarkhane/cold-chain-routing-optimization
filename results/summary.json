@@ -1,0 +1,226 @@
+{
+  "project": "Intelligent Cold-Chain Routing & Dynamic Inventory Optimization",
+  "author": "Nalin Barkhane",
+  "date": "2026-05-05",
+  "phase_1_data_engineering": {
+    "description": "Dual-database pipeline \u2014 PostgreSQL for structured MDM, MongoDB for IoT telemetry",
+    "postgresql": {
+      "database": "cold_chain",
+      "warehouses": 6,
+      "skus": 12,
+      "sku_categories": [
+        "pharmaceutical",
+        "dairy",
+        "produce",
+        "frozen",
+        "beverage"
+      ],
+      "transportation_routes": 15,
+      "daily_demand_records": 52632,
+      "inventory_records": 52632,
+      "date_range": "2023-01-01 to 2024-12-31"
+    },
+    "mongodb": {
+      "database": "cold_chain",
+      "iot_telemetry_documents": 29232,
+      "weather_event_documents": 450,
+      "supplier_delay_documents": 200,
+      "trucks_simulated": 8,
+      "temp_breach_rate_pct": 6.0
+    },
+    "etl_output": {
+      "file": "data/features.csv",
+      "rows": 52632,
+      "columns": 34,
+      "feature_groups": [
+        "temporal (day_of_week, month, quarter, week_of_year, day_of_year, year, is_weekend)",
+        "lag features (lag_7, lag_14, lag_28)",
+        "rolling statistics (rolling_7/14/28_mean, rolling_7_std)",
+        "external signals (weather_severity, IoT_breach_count, supplier_delay_hrs)"
+      ]
+    }
+  },
+  "phase_2_demand_forecasting": {
+    "description": "XGBoost time-series demand forecasting trained on 2 years of historical data",
+    "model": "XGBoost Regressor",
+    "train_period": "2023-01-29 to 2024-07-31",
+    "validation_period": "2024-08-01 to 2024-09-30",
+    "test_period": "2024-10-01 to 2024-12-31",
+    "training_rows": 39600,
+    "validation_rows": 4392,
+    "test_rows": 6624,
+    "hyperparameters": {
+      "n_estimators": 1000,
+      "best_iteration": 283,
+      "max_depth": 6,
+      "learning_rate": 0.05,
+      "subsample": 0.8,
+      "colsample_bytree": 0.8,
+      "early_stopping_rounds": 50
+    },
+    "test_metrics": {
+      "MAE": 22.32,
+      "RMSE": 33.9,
+      "MAPE_pct": 7.37,
+      "R2": 0.978
+    },
+    "validation_rmse": 36.69,
+    "model_file": "models/demand_forecast.json",
+    "plots": [
+      "models/plots/feature_importance.png",
+      "models/plots/actual_vs_predicted.png",
+      "models/plots/time_series_forecast.png",
+      "models/plots/error_distribution.png"
+    ]
+  },
+  "phase_3_rl_routing": {
+    "description": "PPO reinforcement learning agent for dynamic truck routing using real-time IoT conditions",
+    "environment": {
+      "name": "ColdChainRoutingEnv",
+      "framework": "Gymnasium",
+      "observation_space": "Box(28,) \u2014 inventory, demand, weather, stockout risk, cargo one-hot",
+      "action_space": "Discrete(15) \u2014 warehouse-pair routes",
+      "episode_length_days": 30,
+      "reward_function": "R_t = -(C_transport * d_t + C_spoilage * max(0, T_truck - T_threshold) + C_stockout * S_missed)",
+      "cost_coefficients": {
+        "C_transport": 1.0,
+        "C_spoilage": 15.0,
+        "C_stockout": 10.0
+      }
+    },
+    "training": {
+      "algorithm": "PPO (Proximal Policy Optimization)",
+      "library": "Stable-Baselines3 v2.8.0",
+      "total_timesteps": 2000000,
+      "n_envs": 4,
+      "learning_rate": 0.0003,
+      "n_steps": 512,
+      "batch_size": 64,
+      "n_epochs": 10
+    },
+    "results_200k_baseline": {
+      "note": "Initial run \u2014 200K steps, C_spoilage=5.0 (before reward shaping)",
+      "random_policy_mean_reward": -200.26,
+      "ppo_mean_reward": -171.29,
+      "overall_improvement_pct": 14.5,
+      "stockout_cost_reduction_pct": 24.4,
+      "spoilage_cost_change_pct": 29.7
+    },
+    "results_2M_final": {
+      "note": "Final run \u2014 2M steps, C_spoilage=15.0 (reward shaping applied)",
+      "random_policy_mean_reward": -260.72,
+      "ppo_mean_reward": -218.48,
+      "overall_improvement_pct": 16.2,
+      "stockout_cost_reduction_pct": 19.5,
+      "spoilage_cost_reduction_pct": 8.7,
+      "vs_200k_baseline": {
+        "note": "Higher C_spoilage inflates raw reward scores, but agent learned to reduce BOTH costs simultaneously",
+        "spoilage_improvement": "flipped from +29.7% (worse) to -8.7% (better)",
+        "stockout_improvement": "maintained strong reduction (-19.5%)"
+      }
+    },
+    "diagnosis": {
+      "n_episodes": 100,
+      "random_mean_reward": -265.47,
+      "greedy_mean_reward": -280.71,
+      "ppo_mean_reward": -226.51,
+      "ppo_vs_greedy_pct": 19.3,
+      "ppo_vs_random_pct": 14.7,
+      "greedy_vs_random_pct": -5.7,
+      "verdict": "PPO meaningfully beats greedy \u2014 RL is adding real value",
+      "cost_breakdown_ppo": {
+        "transport": 13.006,
+        "transport_pct": 5.7,
+        "spoilage": 92.276,
+        "spoilage_pct": 40.7,
+        "stockout": 121.229,
+        "stockout_pct": 53.5
+      },
+      "scale_check": "Cost terms are reasonably balanced"
+    },
+    "model_file": "models/rl_routing/ppo_cold_chain.zip",
+    "plots": [
+      "models/plots/rl_learning_curve.png",
+      "models/plots/rl_policy_comparison.png",
+      "models/plots/rl_route_preferences.png",
+      "models/plots/diagnosis_comparison.png"
+    ],
+    "ablation": {
+      "strategy": "Warm-start from 2M baseline, fine-tune 1M steps per variant",
+      "finetune_steps": 1000000,
+      "evaluation_episodes": 100,
+      "evaluation_environment": "neutral (baseline weights) \u2014 weight-independent comparison",
+      "configs": {
+        "baseline": {
+          "c_spoilage": 15.0,
+          "c_stockout": 10.0
+        },
+        "spoilage_5x": {
+          "c_spoilage": 75.0,
+          "c_stockout": 10.0
+        },
+        "spoilage_10x": {
+          "c_spoilage": 150.0,
+          "c_stockout": 10.0
+        },
+        "stockout_5x": {
+          "c_spoilage": 15.0,
+          "c_stockout": 50.0
+        }
+      },
+      "results": {
+        "baseline": {
+          "breach_deg_c_mean": 5.87,
+          "breach_deg_c_std": 3.93,
+          "stockout_units_mean": 66744.4,
+          "stockout_units_std": 4050.2,
+          "spoilage_frac_pct": 3.881
+        },
+        "spoilage_5x": {
+          "breach_deg_c_mean": 5.75,
+          "breach_deg_c_std": 4.04,
+          "stockout_units_mean": 69676.2,
+          "stockout_units_std": 4287.5,
+          "spoilage_frac_pct": 3.795
+        },
+        "spoilage_10x": {
+          "breach_deg_c_mean": 6.03,
+          "breach_deg_c_std": 4.24,
+          "stockout_units_mean": 66888.3,
+          "stockout_units_std": 4478.1,
+          "spoilage_frac_pct": 3.979
+        },
+        "stockout_5x": {
+          "breach_deg_c_mean": 6.55,
+          "breach_deg_c_std": 4.43,
+          "stockout_units_mean": 64381.1,
+          "stockout_units_std": 3802.0,
+          "spoilage_frac_pct": 4.322
+        }
+      },
+      "agent_responsive": true,
+      "plot": "models/plots/ablation_reward_weights.png"
+    }
+  },
+  "tech_stack": {
+    "databases": [
+      "PostgreSQL 14",
+      "MongoDB 8.2"
+    ],
+    "languages": [
+      "Python 3.11"
+    ],
+    "key_libraries": [
+      "psycopg2-binary",
+      "pymongo",
+      "pandas",
+      "numpy",
+      "xgboost",
+      "scikit-learn",
+      "gymnasium",
+      "stable-baselines3",
+      "matplotlib",
+      "seaborn"
+    ]
+  }
+}
